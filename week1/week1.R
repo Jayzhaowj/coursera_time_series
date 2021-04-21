@@ -6,18 +6,72 @@
 ###############################
 #####    stationarity     #####
 ###############################
+
 #### simulation example: white noise 
-### generate stationary time series
+
+## generate stationary time series
 t <- 0:100
 y_stationary <- rnorm(length(t), mean=0, sd=1) # the stationary time series (ts)
 
 par(mfrow = c(1, 2), cex.lab = 1.3, cex.main = 1.3)
-# plot the stationary signal and ACF
+## plot the stationary signal and ACF
 plot(t, y_stationary, type = 'l', col='red',
      xlab = 'time (t)', ylab = "Y(t)", 
      main = "Stationary signal")
 acf(y_stationary, lag.max = length(y_stationary),
     xlab = "lag", ylab = "ACF", main = " ")
+
+
+###########################################
+##### differencing and moving average #####
+###########################################
+
+data(co2) # load co2 dataset
+plot.ts(co2)
+
+## doing moving average to remove effects of periodic component
+mav_even <- function(x,d=12){filter(x,c(0.5/d,rep(1/d,(d-1)),0.5/d), sides=2)}
+co2_mav <- mav_even(co2, d=12)
+
+## plot smoothed time series
+plot.ts(co2_mav, main = "Smoothed Series")
+
+## plot sample ACF
+acf(co2_mav[!is.na(co2_mav)], lag.max = 100, type = 'correlation', 
+    main = "sample ACF of smoothed series")
+
+## plot sample PACF
+pacf(co2_mav[!is.na(co2_mav)], lag.max = 100, main = "sample PACF of smoothed series")
+
+## doing 1st order differencing to remove effects of trend component
+co2_mav_dtd <- diff(co2_mav, lag = 6, differences = 1)
+
+## plot dataset after differencing
+plot.ts(co2_mav_dtd, main = "Smoothed and Detrended Series")
+
+## plot sample ACF
+acf(co2_mav_dtd[!is.na(co2_mav_dtd)], lag.max = 50, type = "correlation", 
+    main = "sample ACF of detrended and non-seasonal dataset")
+## plot sample PACF
+pacf(co2_mav_dtd[!is.na(co2_mav_dtd)], lag.max = 50, 
+    main = "sample PACF of detrended and non-seasonal dataset")
+
+
+
+##############################
+#### only doing the difference ####
+##############################
+
+co2_dtd <- diff(diff(co2, lag=12, differences=1))
+
+## plot sample ACF
+acf(co2_dtd[!is.na(co2_dtd)], lag.max = 50, type = "correlation", 
+    main = "sample ACF of detrended and non-seasonal dataset")
+## plot sample PACF
+pacf(co2_dtd[!is.na(co2_dtd)], lag.max = 50, 
+     main = "sample PACF of detrended and non-seasonal dataset")
+
+
 
 
 ###############################
