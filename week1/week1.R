@@ -187,7 +187,7 @@ abline(v = sd, col = 'red')
 #######################################################
 ########        MCMC sampling                 #########
 #######################################################
-
+# MCMC sample from full likelihood and reference prior
 # compute Q star
 Q_star <- function(phi, y){
     n <- length(y)
@@ -202,12 +202,12 @@ transform <- function(phi){
 inv_transform <- function(eta){
     return((1-exp(eta))/(1+exp(eta)))
 }
-# compute likelihood 
+# compute likelihood of posterior distribution
 log_likl <- function(phi, eta, v, y){
     return(log(1-phi^2) - 0.5*Q_star(phi, y)/v + eta - 2*log(1+exp(eta)))
 }
 
-# metropolis hasting
+# metropolis hasting for phi
 mh <- function(eta_cur, v, step_size, y){
     acc <- 0
     phi_cur <- inv_transform(eta_cur)
