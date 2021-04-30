@@ -174,12 +174,12 @@ n_sample <- 1000 # sample size
 nu_sample <- 1/rgamma(n_sample, (n-2)/2, sum((yt[2:n] - phi_MLE*yt[1:(n-1)])^2)/2)
 
 ## step 2: sample posterior distribution of phi from normal distribution
-phi_sample <- rnorm(n_sample, mean = phi_MLE, sd = sqrt(nu_sample)/sum((yt[1:(n-1)])^2))
+phi_sample <- rnorm(n_sample, mean = phi_MLE, sd = sqrt(nu_sample/sum((yt[1:(n-1)])^2)))
 
 ## plot histogram of posterior samples of phi and nu
 par(mfrow = c(1, 2), cex.lab = 1.3)
 hist(phi_sample, xlab = bquote(phi), 
-     main = bquote("Histogram of "~phi), xlim = c(0.895, .915))
+     main = bquote("Histogram of "~phi))
 abline(v = phi, col = 'red')
 hist(nu_sample, xlab = bquote(nu), main = bquote("Histogram of "~nu))
 abline(v = sd, col = 'red')
@@ -204,7 +204,7 @@ inv_transform <- function(eta){
 }
 # compute likelihood of posterior distribution
 log_likl <- function(phi, eta, v, y){
-    return(log(1-phi^2) - 0.5*Q_star(phi, y)/v + eta - 2*log(1+exp(eta)))
+    return(0.5*log(1-phi^2) - 0.5*Q_star(phi, y)/v + eta - 2*log(1+exp(eta)))
 }
 
 # metropolis hasting for phi
