@@ -203,12 +203,12 @@ bic <- bic-min(bic)
 par(mfrow = c(1, 1))
 matplot(1:pmax,matrix(c(aic,bic),pmax,2),ylab='value',
         xlab='AR order p',pch="ab", col = 'black', main = "AIC and BIC")
-text(which.min(aic), aic[which.min(aic)], "a", col = 'red')
-text(which.min(bic), bic[which.min(bic)], "b", col = 'red')
+text(which.min(aic), aic[which.min(aic)], "a", col = 'red') # highlight the model order selected by AIC
+text(which.min(bic), bic[which.min(bic)], "b", col = 'red') # highlight the model order selected by BIC
 
 ########################################################
 p <- which.min(bic) # We set up moder order
-print(paste0("The chosen model order: ", p))
+print(paste0("The chosen model order by BIC: ", p))
 
 ##
 y <- as.matrix(rev(data[(p+1):n_Total]))
@@ -259,9 +259,9 @@ arma.spec(ar=phi, var.noise = s^2, main = 'EEG')
 ##########################################################
 
 
-###########################################
-##### differencing and moving average #####
-###########################################
+#####################################################
+##### differencing and fit moving average model #####
+#####################################################
 
 
 data(co2) # load co2 dataset
