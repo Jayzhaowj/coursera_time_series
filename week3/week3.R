@@ -2,13 +2,16 @@
 #####  Week 3  #######
 ######################
 
+## require dlm
+library(dlm)
+
 #################################################
 ##### Univariate DLM: Known, constant variance
 #################################################
 
 ##### First order polynomial #####
 ### forward update equations ###
-forward_filter <- function(data, parameters, initial_states){
+forward_filter <- function(data, model){
   
   ## retrieve dataset
   yt <- data$yt
@@ -16,14 +19,14 @@ forward_filter <- function(data, parameters, initial_states){
   
   ## retrieve a set of quadruples 
   # FF, GG, VV, WW are scalar
-  FF <- parameters$FF  
-  GG <- parameters$GG
-  VV <- parameters$VV
-  WW <- parameters$WW
+  FF <- model$FF  
+  GG <- model$GG
+  VV <- model$V
+  WW <- model$W
   
   ## retrieve initial states
-  m0 <- initial_states$m0
-  C0 <- initial_states$C0
+  m0 <- model$m0
+  C0 <- model$C0
 
   ## create placeholder for results
   d <- dim(GG)[1]
@@ -61,14 +64,14 @@ forward_filter <- function(data, parameters, initial_states){
 }
 
 ### smoothing function ###
-backward_smoothing <- function(data, parameters, posterior_states){
+backward_smoothing <- function(data, model, posterior_states){
   ## retrieve data 
   yt <- data$yt
   num_timesteps <- length(yt) 
     
   ## retrieve parameters
-  FF <- parameters$FF
-  GG <- parameters$GG
+  FF <- model$FF
+  GG <- model$GG
   
   ## retrieve parameters
   mt <- posterior_states$mt
@@ -100,13 +103,13 @@ backward_smoothing <- function(data, parameters, posterior_states){
 
 
 ## Forecast Distribution for k step
-forecast_function <- function(posterior_states, k, parameters){
+forecast_function <- function(posterior_states, k, model){
 
   ## retrieve parameters
-  FF <- parameters$FF
-  GG <- parameters$GG
-  WW <- parameters$WW
-  VV <- parameters$VV
+  FF <- model$FF
+  GG <- model$GG
+  WW <- model$W
+  VV <- model$V
   mt <- posterior_states$mt
   Ct <- posterior_states$Ct
   
@@ -139,16 +142,6 @@ forecast_function <- function(posterior_states, k, parameters){
   return(list(at=at, Rt=Rt, ft=ft, Qt=Qt))
 }
 
-## create list for parameters
-set_up_parameters <- function(GG, FF, VV, WW){
-  return(list(GG=GG, FF=FF, VV=VV, WW=WW))
-}
-
-
-## create list for initial states
-set_up_initial_states <- function(m0, C0){
-  return(list(m0=m0, C0=C0))
-}
 
 ## obtain 95% credible interval
 get_credible_interval <- function(ft, Qt, quantile = c(0.025, 0.975)){
@@ -185,7 +178,7 @@ myplot <- function(results_filtered, results_smoothed, results_forecast, ci=TRUE
 ##########################################################
 #### first order polynomial with all parameters known ####
 ##########################################################
-library(dlm)
+
 num_total <- length(Nile)
 num_timesteps <- 95
 train_data <- Nile[1:num_timesteps]
@@ -194,27 +187,18 @@ valid_data <- Nile[(num_timesteps+1):num_total]
 data <- list(yt = train_data)
 
 ## set up parameters
-GG <- as.matrix(1)
-FF <- as.matrix(1)
-VV <- as.matrix(15100)
-WW <- as.matrix(755)
-m0 <- as.matrix(0.0)
-C0 <- as.matrix(1e7)
-
-## wrap up all parameters and initial values
-initial_states <- set_up_initial_states(m0, C0)
-parameters <- set_up_parameters(GG, FF, VV, WW)
+myModel <- dlm(FF=1, GG=1, V=15100, W=755, m0=0, C0=1e7)
 
 ## filtering
-results_filtered <- forward_filter(data, parameters, initial_states)
+results_filtered <- forward_filter(data, myModel)
 ci_filtered <- get_credible_interval(results_filtered$mt, results_filtered$Ct)
 
 ## one step-ahead forecasting
-results_forecast <- forecast_function(results_filtered, length(valid_data), parameters)
+results_forecast <- forecast_function(results_filtered, length(valid_data), myModel)
 ci_forecast <- get_credible_interval(results_forecast$ft, results_forecast$Qt)
 
 ## smoothing
-results_smoothed <- backward_smoothing(data, parameters, results_filtered)
+results_smoothed <- backward_smoothing(data, myModel, results_filtered)
 ci_smoothed <- get_credible_interval(results_smoothed$mnt, results_smoothed$Cnt)
 
 
