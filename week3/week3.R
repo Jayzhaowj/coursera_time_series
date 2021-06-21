@@ -42,7 +42,7 @@ forward_filter <- function(data, model){
   for(i in 1:num_timesteps){
     # moments of priors at t
     if(i == 1){
-      at[i, ] <- GG %*% t(m0)
+      at[i, ] <- GG %*% m0
       Rt[, , i] <- GG %*% C0 %*% t(GG) + WW
     }else{
       at[i, ] <- GG %*% t(mt[i-1, , drop=FALSE])
@@ -183,8 +183,7 @@ num_total <- length(Nile)
 num_timesteps <- 95
 train_data <- Nile[1:num_timesteps]
 valid_data <- Nile[(num_timesteps+1):num_total]
-
-data <- list(yt = train_data)
+data <- list(yt = train_data, valid_data=valid_data)
 
 ## set up parameters
 myModel <- dlm(FF=1, GG=1, V=15100, W=755, m0=0, C0=1e7)
@@ -249,7 +248,7 @@ forward_filter <- function(data, parameters, initial_states, delta){
   # moments of priors at t
   for(i in 1:num_timesteps){
     if(i == 1){
-      at[i, ] <- Gt[, , i] %*% t(m0)
+      at[i, ] <- Gt[, , i] %*% m0
       Pt <- Gt[, , i] %*% C0 %*% t(Gt[, , i])
       if(missing(delta)){
         Wt <- Wt_star[, , i]*S0
@@ -287,6 +286,7 @@ forward_filter <- function(data, parameters, initial_states, delta){
   return(list(mt = mt, Ct = Ct, 
               at = at, Rt = Rt, 
               ft = ft, Qt = Qt, 
+              et = et, 
               nt = nt, St = St))
 }
 
@@ -327,7 +327,7 @@ backward_smoothing <- function(data, parameters, posterior_states, delta){
         mnt[i, ] <- mt[i, ] + Bt %*% (mnt[i+1, ] - at[i+1, ])
         Cnt[, , i] <- Ct[, , i] + Bt %*% (Cnt[, , i+1] - Rt[, , i+1]) %*% t(Bt)
       }else{
-        inv_Gt <- chol2inv(chol(Gt[, , i+1]))
+        inv_Gt <- solve(Gt[, , i+1])
         mnt[i, ] <- (1-delta)*mt[i, ] + delta*inv_Gt %*% t(mnt[i+1, , drop=FALSE])
         Cnt[, , i] <- St[num_timesteps]/St[i]*((1-delta)*Ct[, , i] + delta^2*inv_Gt %*% Cnt[, , i + 1]  %*% t(inv_Gt))
       }
@@ -416,7 +416,7 @@ get_credible_interval <- function(ft, Qt, nt, quantile = c(0.025, 0.975)){
   # lower bound of 95% credible interval
   z_quantile <- qt(quantile[1], df = nt)
   bound[, 1] <- ft + z_quantile*sqrt(as.numeric(Qt)) 
-  
+
   # upper bound of 95% credible interval
   z_quantile <- qt(quantile[2], df = nt)
   bound[, 2] <- ft + z_quantile*sqrt(as.numeric(Qt)) 
@@ -428,7 +428,7 @@ num_total <- length(Nile)
 num_timesteps <- 95
 train_data <- Nile[1:num_timesteps]
 valid_data <- Nile[(num_timesteps+1):num_total]
-data <- list(yt = train_data)
+data <- list(yt = train_data, valid_data=valid_data)
 
 
 ## set up parameters
@@ -436,7 +436,7 @@ Gt <- array(1, dim = c(1, 1, num_total))
 Ft <- array(1, dim = c(1, 1, num_total))
 Wt_star <- array(100, dim = c(1, 1, num_total))
 m0 <- as.matrix(0.0)
-C0_star <- as.matrix(1e4)
+C0_star <- as.matrix(1e6)
 n0 <- 10
 S0 <- 1/10
 
@@ -467,47 +467,79 @@ myplot(results_filtered = results_filtered,
 ##################################################
 ##### using discount factor ##########
 ##################################################
+## compute measures of forecasting accuracy
+## MAD: mean absolute deviation
+## MSE: mean square error
+## MAPE: mean absolute percentage error
+## Neg LL: Negative log-likelihood of one step ahead forecast function
+measure_forecast_accuracy <- function(et, yt, Qt=NA, nt=NA, type){
+  if(type == "MAD"){
+    measure <- mean(abs(et))
+  }else if(type == "MSE"){
+    measure <- mean(et^2)
+  }else if(type == "MAPE"){
+    measure <- mean(abs(et)/yt)
+  }else if(type == "NLL"){
+    measure <- log_likelihood_one_step_ahead(et, Qt, nt)
+  }else{
+    stop("Wrong type!")
+  }
+  return(measure)
+}
+
 
 ## compute log likelihood of one step ahead forecast function
-log_likelihood_one_step_ahead <- function(yt, ft, Qt, nt){
+log_likelihood_one_step_ahead <- function(et, Qt, nt){
   ## yt is time series, dimension: num_timesteps*1
   ## ft is expectation of one-step-ahead forecast function, dimension: num_timesteps*1
   ## Qt is variance of one-step-ahead forecast function, dimension: num_timesteps*1
   ## nt is degree freedom of t distribution, including initial states, dimension: (num_timesteps+1)*1
-  num_timesteps <- length(yt)
+  num_timesteps <- length(et)
   ntm1 <- nt[1:num_timesteps] # n_{t-1}
-  zt <- (yt-ft)/sqrt(Qt) # standardization
-  return(sum(dt(zt, df=ntm1, log=TRUE)))
+  zt <- (et)/sqrt(Qt) # standardization
+  return(-sum(dt(zt, df=nt, log=TRUE)))
 }
 
 ## Maximize log density of one-step-ahead forecast function to select discount factor
-adaptive_dlm <- function(data, parameters, initial_states, df_range){
-  ll <- NA
-  ll_tmp <- numeric(length(df_range))
+adaptive_dlm <- function(data, parameters, initial_states, df_range, type, forecast=TRUE){
+  measure_best <- NA
+  measure <- numeric(length(df_range))
+  valid_data <- data$valid_data
   df_opt <- NA
   j <- 0
   ## find the optimal discount factor
   for(i in df_range){
     j <- j + 1
     results_tmp <- forward_filter(data, parameters, initial_states, i)
-    ll_tmp[j] <- log_likelihood_one_step_ahead(data$yt, results_tmp$ft, results_tmp$Qt, 
-                                               c(initial_states$n0, results_tmp$nt))
+
+    measure[j] <- measure_forecast_accuracy(et=results_tmp$et, yt=data$yt,
+                                            Qt=results_tmp$Qt, nt=c(initial_states$n0, results_tmp$nt), 
+                                            type=type)
+
+    
     if(j == 1){
-      ll <- ll_tmp[j]
+      measure_best <- measure[j]
       results_filtered <- results_tmp
       df_opt <- i
-    }else if(ll_tmp[j] > ll){
-      ll <- ll_tmp[j]
+    }else if(measure[j] < measure_best){
+      measure_best <- measure[j]
       results_filtered <- results_tmp
       df_opt <- i
     }
   }
   results_smoothed <- backward_smoothing(data, parameters, results_filtered, delta = df_opt)
-  results_forecast <- forecast_function(results_filtered, length(valid_data), parameters, df_opt)
-  return(list(results_filtered=results_filtered, 
-              results_smoothed=results_smoothed, 
-              results_forecast=results_forecast, 
-              df_opt = df_opt, ll = ll_tmp))
+  if(forecast){
+    results_forecast <- forecast_function(results_filtered, length(valid_data), parameters, df_opt)
+    return(list(results_filtered=results_filtered, 
+                results_smoothed=results_smoothed, 
+                results_forecast=results_forecast, 
+                df_opt = df_opt, measure=measure))
+  }else{
+    return(list(results_filtered=results_filtered, 
+                results_smoothed=results_smoothed, 
+                df_opt = df_opt, measure=measure))
+  }
+  
 }
 
 
@@ -516,7 +548,7 @@ num_total <- length(Nile)
 num_timesteps <- 95
 train_data <- Nile[1:num_timesteps]
 valid_data <- Nile[(num_timesteps+1):num_total]
-data <- list(yt = train_data)
+data <- list(yt = train_data, valid_data=valid_data)
 
 
 ## set up parameters
@@ -532,25 +564,26 @@ initial_states <- set_up_initial_states(m0, C0_star, n0, S0)
 parameters <- set_up_parameters(Gt, Ft)
 
 ## set up range of discount factor
-df_range <- seq(0.8, 1, by = .01)
+df_range <- seq(0.6, 1, by = .01)
 
 ## fit discount DLM
-results <- adaptive_dlm(data, parameters, initial_states, df_range)
+## MSE
+results_MSE <- adaptive_dlm(data, parameters, initial_states, df_range, "MSE")
 
 ## print selected discount factor
-print(paste("The selected discount factor:", results$df_opt))
+print(paste("The selected discount factor:", results_MSE$df_opt))
 
 ## retrieve filtered results
-results_filtered <- results$results_filtered
+results_filtered <- results_MSE$results_filtered
 ci_filtered <- get_credible_interval(results_filtered$mt, results_filtered$Ct, results_filtered$nt)
 
 ## retrieve smoothed results
-results_smoothed <- results$results_smoothed
+results_smoothed <- results_MSE$results_smoothed
 ci_smoothed <- get_credible_interval(results_smoothed$mnt, results_smoothed$Cnt, 
                                      results_filtered$nt[num_timesteps])
 
 ## retrieve one-step-ahead forecast results
-results_forecast <- results$results_forecast
+results_forecast <- results_MSE$results_forecast
 ci_forecast <- get_credible_interval(results_forecast$ft, results_forecast$Qt, results_filtered$nt[num_timesteps])
 
 ## plot results
@@ -558,3 +591,113 @@ myplot(results_filtered = results_filtered,
        results_smoothed = results_smoothed,
        results_forecast = results_forecast,
        ci = TRUE)
+
+#######################################################
+## fit discount DLM
+## MSE
+results_MAD <- adaptive_dlm(data, parameters, initial_states, df_range, "MAD")
+
+## print selected discount factor
+print(paste("The selected discount factor:", results_MAD$df_opt))
+
+## retrieve filtered results
+results_filtered <- results_MAD$results_filtered
+ci_filtered <- get_credible_interval(results_filtered$mt, 
+                                     results_filtered$Ct, 
+                                     results_filtered$nt)
+
+## retrieve smoothed results
+results_smoothed <- results_MAD$results_smoothed
+ci_smoothed <- get_credible_interval(results_smoothed$mnt, results_smoothed$Cnt, 
+                                     results_filtered$nt[num_timesteps])
+
+## retrieve one-step-ahead forecast results
+results_forecast <- results_MAD$results_forecast
+ci_forecast <- get_credible_interval(results_forecast$ft, results_forecast$Qt, results_filtered$nt[num_timesteps])
+
+## plot results
+myplot(results_filtered = results_filtered,
+       results_smoothed = results_smoothed,
+       results_forecast = results_forecast,
+       ci = TRUE)
+
+
+###########################################
+################## EEG ####################
+###########################################
+dir <- "/Users/johnn/Documents/Courses/coursera_time_series/week3/"
+eeg_data <- read.table(file = paste0(dir, "eeg_F3.txt"))
+
+### pick a channel
+sl_ch <- 1
+ts_data <- eeg_data[, sl_ch]
+
+## fit TV-VAR(12)
+order <- 12
+T <- length(ts_data)
+data <- list(yt = ts_data[(order+1):T])
+
+## set up parameters
+Gt <- array(diag(order), dim = c(order, order, T-order))
+
+build_design_matrix <- function(ts, order){
+  n <- length(ts)
+  Ft <- array(0, dim = c(1, order, n-order))
+  for(t in (order+1):n){
+    Ft[, , t-order] <- ts[(t-1):(t-order)]
+  }
+  return(Ft)
+}
+Ft <- build_design_matrix(ts_data, order)
+
+
+## set up initial state parameters
+m0 <- as.matrix(rep(0.0, order))
+C0_star <- 10*diag(order)
+n0 <- 10
+S0 <- 1/10
+
+## wrap up all parameters and initial values
+initial_states <- set_up_initial_states(m0, C0_star, n0, S0)
+parameters <- set_up_parameters(Gt, Ft)
+
+## set up range of discount factor
+df_range <- seq(0.8, 1, by = .001)
+
+## fit discount DLM
+## MSE
+results_MSE <- adaptive_dlm(data, parameters, initial_states, 
+                            df_range, "MSE", forecast = FALSE)
+
+## print selected discount factor
+print(paste("The selected discount factor:", results_MSE$df_opt))
+
+## retrieve filtered results
+results_filtered <- results_MSE$results_filtered
+ci_filtered <- get_credible_interval(results_filtered$ft, results_filtered$Qt, 
+                                     results_filtered$nt)
+
+## retrieve smoothed results
+results_smoothed <- results_MSE$results_smoothed
+ci_smoothed <- get_credible_interval(results_smoothed$fnt, results_smoothed$Qnt, 
+                                     results_filtered$nt[length(results_smoothed$fnt)])
+
+## plot results
+## filtering
+index <- 1:(length(data$yt))
+plot(index, data$yt, ylab='voltage (mcv)',
+     main = paste("EEG channel", sl_ch), type = 'l',
+     xlab = 'time', lty=3, ylim = c(-400, 330))
+lines(index, results_filtered$ft, type = 'l', col='red', lwd=2)
+lines(index, ci_filtered[, 1], type='l', col='red', lty=2)
+lines(index, ci_filtered[, 2], type='l', col='red', lty=2)
+
+
+## filtering
+index <- 1:(length(data$yt))
+plot(index, data$yt, ylab='voltage (mcv)',
+     main = paste("EEG channel", sl_ch), type = 'l',
+     xlab = 'time', lty=3, ylim = c(-400, 330))
+lines(index, results_smoothed$fnt, type = 'l', col='blue', lwd=2)
+lines(index, ci_smoothed[, 1], type='l', col='blue', lty=2)
+lines(index, ci_smoothed[, 2], type='l', col='blue', lty=2)
